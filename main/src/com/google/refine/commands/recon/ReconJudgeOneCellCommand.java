@@ -1,5 +1,4 @@
 /*
-
 Copyright 2010, Google Inc.
 All rights reserved.
 
@@ -23,12 +22,11 @@ LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
 A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
 OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
 SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,           
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY           
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 */
 
 package com.google.refine.commands.recon;
@@ -60,6 +58,7 @@ public class ReconJudgeOneCellCommand extends Command {
     @Override
     public void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
+
         if (!hasValidCSRFToken(request)) {
             respondCSRFError(response);
             return;
@@ -75,18 +74,22 @@ public class ReconJudgeOneCellCommand extends Command {
             int cellIndex = Integer.parseInt(request.getParameter("cell"));
             Judgment judgment = Recon.stringToJudgment(request.getParameter("judgment"));
 
+            // Prepare a possible match candidate
             ReconCandidate match = null;
             String id = request.getParameter("id");
             if (id != null) {
                 String scoreString = request.getParameter("score");
+                double score = (scoreString != null) ? Double.parseDouble(scoreString) : 100;
 
                 match = new ReconCandidate(
                         id,
                         request.getParameter("name"),
                         request.getParameter("types").split(","),
-                        scoreString != null ? Double.parseDouble(scoreString) : 100);
+                        score
+                );
             }
 
+            // Create and queue our process
             JudgeOneCellProcess process = new JudgeOneCellProcess(
                     project,
                     "Judge one cell's recon result",
@@ -95,39 +98,43 @@ public class ReconJudgeOneCellCommand extends Command {
                     cellIndex,
                     match,
                     request.getParameter("identifierSpace"),
-                    request.getParameter("schemaSpace"));
+                    request.getParameter("schemaSpace")
+            );
 
+            // Execute or queue the process
             HistoryEntry historyEntry = project.processManager.queueProcess(process);
             if (historyEntry != null) {
-                /*
-                 * If the process is done, write back the cell's data so that the client side can update its UI right
-                 * away.
-                 */
-
+                // If the process is done, respond with updated cell data
                 Pool pool = new Pool();
                 if (process.newCell != null && process.newCell.recon != null) {
                     pool.pool(process.newCell.recon);
                 }
 
+                // Using the existing ReconClearOneCellCommand's CellResponse for JSON response
                 respondJSON(response, new ReconClearOneCellCommand.CellResponse(historyEntry, process.newCell, pool));
             } else {
+                // Process is still pending
                 respond(response, "{ \"code\" : \"pending\" }");
             }
+
         } catch (Exception e) {
             respondException(response, e);
         }
     }
 
+    /**
+     * Inner class that performs the "judge one cell" logic as a process.
+     */
     protected static class JudgeOneCellProcess extends QuickHistoryEntryProcess {
 
-        final int rowIndex;
-        final int cellIndex;
-        final Judgment judgment;
-        final ReconCandidate match;
-        final String identifierSpace;
-        final String schemaSpace;
+        private final int rowIndex;
+        private final int cellIndex;
+        private final Judgment judgment;
+        private final ReconCandidate match;
+        private final String identifierSpace;
+        private final String schemaSpace;
 
-        Cell newCell;
+        Cell newCell; // We'll fill this in createHistoryEntry(...)
 
         JudgeOneCellProcess(
                 Project project,
@@ -137,9 +144,9 @@ public class ReconJudgeOneCellCommand extends Command {
                 int cellIndex,
                 ReconCandidate match,
                 String identifierSpace,
-                String schemaSpace) {
+                String schemaSpace
+        ) {
             super(project, briefDescription);
-
             this.judgment = judgment;
             this.rowIndex = rowIndex;
             this.cellIndex = cellIndex;
@@ -150,122 +157,163 @@ public class ReconJudgeOneCellCommand extends Command {
 
         @Override
         protected HistoryEntry createHistoryEntry(long historyEntryID) throws Exception {
-            Cell cell = _project.rows.get(rowIndex).getCell(cellIndex);
-            if (cell == null || !ExpressionUtils.isNonBlankData(cell.value)) {
-                throw new Exception("Cell is blank or error");
-            }
+            // 1) Validate cell and column
+            Cell oldCell = validateCellAndColumn(rowIndex, cellIndex);
 
+            // 2) Prepare Recon object
             Column column = _project.columnModel.getColumnByCellIndex(cellIndex);
-            if (column == null) {
-                throw new Exception("No such column");
-            }
+            Recon oldRecon = (oldCell.recon != null) ? oldCell.recon : null;
+            Recon newRecon = prepareRecon(oldRecon, column, historyEntryID);
 
-            Judgment oldJudgment = cell.recon == null ? Judgment.None : cell.recon.judgment;
+            // 3) Apply new judgment to Recon
+            String description = applyJudgment(newRecon, oldCell, column.getName());
 
-            Recon newRecon = null;
-            if (cell.recon != null) {
-                newRecon = cell.recon.dup(historyEntryID);
-            } else if (identifierSpace != null && schemaSpace != null) {
-                newRecon = new Recon(historyEntryID, identifierSpace, schemaSpace);
-            } else if (column.getReconConfig() != null) {
-                newRecon = column.getReconConfig().createNewRecon(historyEntryID);
-            } else {
-                // This should only happen if we are judging a cell in a column that
-                // has never been reconciled before.
-                newRecon = new Recon(historyEntryID, null, null);
-            }
-
-            newCell = new Cell(
-                    cell.value,
-                    newRecon);
-
-            String cellDescription = "single cell on row " + (rowIndex + 1) +
-                    ", column " + column.getName() +
-                    ", containing \"" + cell.value + "\"";
-
-            String description = null;
-
-            newCell.recon.matchRank = -1;
-            newCell.recon.judgmentAction = "single";
-            newCell.recon.judgmentBatchSize = 1;
-
-            if (judgment == Judgment.None) {
-                if (cell.recon.error == null) {
-                    newCell.recon.judgment = Recon.Judgment.None;
-                } else {
-                    newCell.recon.judgment = Recon.Judgment.Error;
-                }
-                newCell.recon.match = null;
-                description = "Discard recon judgment for " + cellDescription;
-
-            } else if (judgment == Judgment.Error) {
-
-                throw new IllegalArgumentException("Cannot manually set judgment to 'error'");
-
-            } else if (judgment == Judgment.New) {
-                newCell.recon.judgment = Recon.Judgment.New;
-                newCell.recon.match = null;
-
-                description = "Mark to create new item for " + cellDescription;
-            } else {
-                newCell.recon.judgment = Recon.Judgment.Matched;
-                newCell.recon.match = this.match;
-                if (newCell.recon.candidates != null) {
-                    for (int m = 0; m < newCell.recon.candidates.size(); m++) {
-                        if (newCell.recon.candidates.get(m).id.equals(this.match.id)) {
-                            newCell.recon.matchRank = m;
-                            break;
-                        }
-                    }
-                }
-
-                description = "Match " + this.match.name +
-                        " (" + match.id + ") to " +
-                        cellDescription;
-            }
-
+            // 4) Update recon stats
             ReconStats stats = column.getReconStats();
             if (stats == null) {
                 stats = ReconStats.create(_project, cellIndex);
             } else {
-                int newChange = 0;
-                int matchChange = 0;
-                int errorsChange = 0;
-
-                if (oldJudgment == Judgment.New) {
-                    newChange--;
-                }
-                if (oldJudgment == Judgment.Matched) {
-                    matchChange--;
-                }
-                if (oldJudgment == Judgment.Error) {
-                    errorsChange--;
-                }
-                if (newCell.recon.judgment == Judgment.New) {
-                    newChange++;
-                }
-                if (newCell.recon.judgment == Judgment.Matched) {
-                    matchChange++;
-                }
-                if (newCell.recon.judgment == Judgment.Error) {
-                    errorsChange++;
-                }
-
-                stats = new ReconStats(
-                        stats.nonBlanks,
-                        stats.newTopics + newChange,
-                        stats.matchedTopics + matchChange,
-                        stats.errorTopics + errorsChange);
+                Judgment oldJudgment = (oldRecon == null) ? Judgment.None : oldRecon.judgment;
+                stats = updateStats(stats, oldJudgment, newRecon.judgment);
             }
 
+            // 5) Build new Cell & Change objects
+            newCell = new Cell(oldCell.value, newRecon);
             Change change = new ReconChange(
-                    new CellChange(rowIndex, cellIndex, cell, newCell),
+                    new CellChange(rowIndex, cellIndex, oldCell, newCell),
                     column.getName(),
                     column.getReconConfig(),
-                    stats);
+                    stats
+            );
 
             return new HistoryEntry(
-                    historyEntryID, _project, description, null, change);
+                    historyEntryID,
+                    _project,
+                    description,
+                    null,
+                    change
+            );
+        }
+
+        /**
+         * Checks that the cell/column exist and contain valid data.
+         */
+        private Cell validateCellAndColumn(int row, int cellIdx) throws Exception {
+            Cell cell = _project.rows.get(row).getCell(cellIdx);
+            if (cell == null || !ExpressionUtils.isNonBlankData(cell.value)) {
+                throw new Exception("Cell is blank or error");
+            }
+            Column column = _project.columnModel.getColumnByCellIndex(cellIdx);
+            if (column == null) {
+                throw new Exception("No such column");
+            }
+            return cell;
+        }
+
+        /**
+         * Constructs or duplicates a Recon object for the new cell,
+         * depending on whether the oldRecon exists, the column config, etc.
+         */
+        private Recon prepareRecon(Recon oldRecon, Column column, long historyEntryID) {
+            if (oldRecon != null) {
+                // Duplicate existing recon
+                return oldRecon.dup(historyEntryID);
+            }
+            else if (identifierSpace != null && schemaSpace != null) {
+                // Create fresh Recon using the provided identifier spaces
+                return new Recon(historyEntryID, identifierSpace, schemaSpace);
+            }
+            else if (column.getReconConfig() != null) {
+                // Use the column's ReconConfig to build a new Recon
+                return column.getReconConfig().createNewRecon(historyEntryID);
+            }
+            else {
+                // If no config, create a basic Recon
+                return new Recon(historyEntryID, null, null);
+            }
+        }
+
+        /**
+         * Applies the specified judgment to the Recon object and returns
+         * a textual description of the action for the HistoryEntry.
+         */
+        private String applyJudgment(Recon newRecon, Cell oldCell, String columnName) {
+            newRecon.matchRank = -1;
+            newRecon.judgmentAction = "single";
+            newRecon.judgmentBatchSize = 1;
+
+            String cellDescription = "single cell on row " + (rowIndex + 1) +
+                    ", column " + columnName +
+                    ", containing \"" + oldCell.value + "\"";
+
+            switch (judgment) {
+                case None:
+                    if (oldCell.recon != null && oldCell.recon.error != null) {
+                        newRecon.judgment = Judgment.Error;
+                    } else {
+                        newRecon.judgment = Judgment.None;
+                    }
+                    newRecon.match = null;
+                    return "Discard recon judgment for " + cellDescription;
+
+                case Error:
+                    // We typically don't allow setting manual 'Error' explicitly
+                    throw new IllegalArgumentException("Cannot manually set judgment to 'error'");
+
+                case New:
+                    newRecon.judgment = Judgment.New;
+                    newRecon.match = null;
+                    return "Mark to create new item for " + cellDescription;
+
+                case Matched:
+                    newRecon.judgment = Judgment.Matched;
+                    newRecon.match = this.match;
+                    if (newRecon.candidates != null && this.match != null) {
+                        // Try to find match rank in existing candidates
+                        for (int m = 0; m < newRecon.candidates.size(); m++) {
+                            if (newRecon.candidates.get(m).id.equals(this.match.id)) {
+                                newRecon.matchRank = m;
+                                break;
+                            }
+                        }
+                    }
+                    return "Match " + (this.match != null ? this.match.name : "unknown") +
+                            " (" + (this.match != null ? this.match.id : "null") + ") to " +
+                            cellDescription;
+
+                default:
+                    // For safety if new judgments are added in the future
+                    newRecon.judgment = Judgment.None;
+                    newRecon.match = null;
+                    return "No recognized judgment found for " + cellDescription;
+            }
+        }
+
+        /**
+         * Updates recon stats by comparing old vs. new judgments.
+         */
+        private ReconStats updateStats(ReconStats stats, Judgment oldJ, Judgment newJ) {
+            int newChange    = calcDelta(oldJ, newJ, Judgment.New);
+            int matchChange  = calcDelta(oldJ, newJ, Judgment.Matched);
+            int errorsChange = calcDelta(oldJ, newJ, Judgment.Error);
+
+            return new ReconStats(
+                    stats.nonBlanks,
+                    stats.newTopics + newChange,
+                    stats.matchedTopics + matchChange,
+                    stats.errorTopics + errorsChange
+            );
+        }
+
+        private int calcDelta(Judgment oldJ, Judgment newJ, Judgment target) {
+            int delta = 0;
+            if (oldJ == target) {
+                delta--;
+            }
+            if (newJ == target) {
+                delta++;
+            }
+            return delta;
         }
     }
 }
