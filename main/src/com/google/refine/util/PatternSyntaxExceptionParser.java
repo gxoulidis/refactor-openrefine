@@ -33,28 +33,65 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 package com.google.refine.util;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.regex.PatternSyntaxException;
 
 public class PatternSyntaxExceptionParser {
 
-    /*
-     * Class to translate PatternSyntaxExceptions into more user friendly error messages Currently translates the
-     * following error messages from java.util.regex.Pattern "Unclosed character class" "Unmatched closing ')'"
-     * "Unexpected internal error" "Dangling meta character '" + ((char)ch) + "'" "Unclosed counted closure"
-     * "Illegal repetition" "Illegal repetition range" "Illegal character range"
-     * 
-     * The following messages are not currently translated and are output as per PatternSyntaxException
-     * "\\k is not followed by '<' for named capturing group" "(named capturing group <"+ name+"> does not exist"
-     * "Illegal/unsupported escape sequence" "Bad class syntax" "Unexpected character '"+((char)ch)+"'"
-     * "Unclosed character family" "Empty character family" "Unknown Unicode property {name=<" + name + ">, "+ "value=<"
-     * + value + ">}" "Unknown character script name {" + name + "}" "Unknown character block name {" + name + "}"
-     * "Unknown character property name {" + name + "}" "named capturing group has 0 length name"
-     * "named capturing group is missing trailing '>'" "Named capturing group <" + name + "> is already defined"
-     * "Look-behind group does not have " + "an obvious maximum length" "Unknown look-behind group" "Unknown group type"
-     * "Unknown inline modifier" "Internal logic error" "Illegal control escape sequence"
-     * "Illegal octal escape sequence" "Hexadecimal codepoint is too big" "Unclosed hexadecimal escape sequence"
-     * "Illegal hexadecimal escape sequence" "Illegal Unicode escape sequence"
-     */
+    private static final Map<String, String> DESCRIPTION_TO_MESSAGE = new HashMap<>();
+
+    static {
+        DESCRIPTION_TO_MESSAGE.put(
+                "Unclosed character class",
+                "The regular expression is missing a closing ']' character, or has an empty pair of square brackets '[]'."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Unmatched closing ')'",
+                "The regular expression is missing an opening '(' character."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Unclosed group",
+                "The regular expression is missing a closing ')' character."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Dangling meta character '*'",
+                "The regular expression has a '*','+' or '?' in the wrong place."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Dangling meta character '+'",
+                "The regular expression has a '*','+' or '?' in the wrong place."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Dangling meta character '?'",
+                "The regular expression has a '*','+' or '?' in the wrong place."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Unexpected internal error",
+                "The regular expression has a backslash '\\' at the end."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Unescaped trailing backslash",
+                "The regular expression has a backslash '\\' at the end."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Unclosed counted closure",
+                "The regular expression is missing a closing '}' character, or has an incorrect quantifier statement in curly brackets '{}'."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Illegal repetition",
+                "The regular expression has an incomplete or incorrect quantifier statement in curly brackets '{}'."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Illegal repetition range",
+                "The regular expression has a quantifier statement where the minimum is larger than the maximum (e.g. {4,3})."
+        );
+        DESCRIPTION_TO_MESSAGE.put(
+                "Illegal character range",
+                "The regular expression has a range statement which is incomplete or has the characters in the incorrect order (e.g. [9-0])."
+        );
+    }
+
     private final PatternSyntaxException exception;
 
     public PatternSyntaxExceptionParser(PatternSyntaxException e) {
@@ -62,45 +99,7 @@ public class PatternSyntaxExceptionParser {
     }
 
     public String getUserMessage() {
-        String msg = "";
         String desc = exception.getDescription();
-        switch (desc) {
-            case "Unclosed character class":
-                msg = "The regular expression is missing a closing ']' character, or has an empty pair of square brackets '[]'.";
-                break;
-            case "Unmatched closing ')'":
-                msg = "The regular expression is missing a opening '(' character.";
-                break;
-            case "Unclosed group":
-                msg = "The regular expression is missing a closing ')' character.";
-                break;
-            case "Dangling meta character '*'":
-            case "Dangling meta character '+'":
-            case "Dangling meta character '?'":
-                msg = "The regular expression has a '*','+' or '?' in the wrong place.";
-                break;
-            case "Unexpected internal error":
-            case "Unescaped trailing backslash":
-                msg = "The regular expression has a backslash '\\' at the end.";
-                break;
-            case "Unclosed counted closure":
-                msg = "The regular expression is missing a closing '}' character, or has an incorrect quantifier statement in curly brackets '{}'.";
-                break;
-            case "Illegal repetition":
-                msg = "The regular expression has an incomplete or incorrect quantifier statement in curly brackets '{}'.";
-                break;
-            case "Illegal repetition range":
-                msg = "The regular expression has a quantifier statement where the minimum is larger than the maximum (e.g. {4,3}).";
-                break;
-            case "Illegal character range":
-                msg = "The regular expression has a range statement which is incomplete or has the characters in the incorrect order (e.g. [9-0])";
-                break;
-            default:
-                // If no special handling in place fall back on error msg
-                // created by java.util.regex.PatternSyntaxException
-                msg = exception.getMessage();
-                break;
-        }
-        return msg;
+        return DESCRIPTION_TO_MESSAGE.getOrDefault(desc, exception.getMessage());
     }
 }
