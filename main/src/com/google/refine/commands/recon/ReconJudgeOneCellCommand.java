@@ -157,18 +157,14 @@ public class ReconJudgeOneCellCommand extends Command {
 
         @Override
         protected HistoryEntry createHistoryEntry(long historyEntryID) throws Exception {
-            // 1) Validate cell and column
             Cell oldCell = validateCellAndColumn(rowIndex, cellIndex);
 
-            // 2) Prepare Recon object
             Column column = _project.columnModel.getColumnByCellIndex(cellIndex);
             Recon oldRecon = (oldCell.recon != null) ? oldCell.recon : null;
             Recon newRecon = prepareRecon(oldRecon, column, historyEntryID);
 
-            // 3) Apply new judgment to Recon
             String description = applyJudgment(newRecon, oldCell, column.getName());
 
-            // 4) Update recon stats
             ReconStats stats = column.getReconStats();
             if (stats == null) {
                 stats = ReconStats.create(_project, cellIndex);
@@ -177,7 +173,6 @@ public class ReconJudgeOneCellCommand extends Command {
                 stats = updateStats(stats, oldJudgment, newRecon.judgment);
             }
 
-            // 5) Build new Cell & Change objects
             newCell = new Cell(oldCell.value, newRecon);
             Change change = new ReconChange(
                     new CellChange(rowIndex, cellIndex, oldCell, newCell),
@@ -195,9 +190,6 @@ public class ReconJudgeOneCellCommand extends Command {
             );
         }
 
-        /**
-         * Checks that the cell/column exist and contain valid data.
-         */
         private Cell validateCellAndColumn(int row, int cellIdx) throws Exception {
             Cell cell = _project.rows.get(row).getCell(cellIdx);
             if (cell == null || !ExpressionUtils.isNonBlankData(cell.value)) {
@@ -210,33 +202,21 @@ public class ReconJudgeOneCellCommand extends Command {
             return cell;
         }
 
-        /**
-         * Constructs or duplicates a Recon object for the new cell,
-         * depending on whether the oldRecon exists, the column config, etc.
-         */
         private Recon prepareRecon(Recon oldRecon, Column column, long historyEntryID) {
             if (oldRecon != null) {
-                // Duplicate existing recon
                 return oldRecon.dup(historyEntryID);
             }
             else if (identifierSpace != null && schemaSpace != null) {
-                // Create fresh Recon using the provided identifier spaces
                 return new Recon(historyEntryID, identifierSpace, schemaSpace);
             }
             else if (column.getReconConfig() != null) {
-                // Use the column's ReconConfig to build a new Recon
                 return column.getReconConfig().createNewRecon(historyEntryID);
             }
             else {
-                // If no config, create a basic Recon
                 return new Recon(historyEntryID, null, null);
             }
         }
 
-        /**
-         * Applies the specified judgment to the Recon object and returns
-         * a textual description of the action for the HistoryEntry.
-         */
         private String applyJudgment(Recon newRecon, Cell oldCell, String columnName) {
             newRecon.matchRank = -1;
             newRecon.judgmentAction = "single";
@@ -257,7 +237,6 @@ public class ReconJudgeOneCellCommand extends Command {
                     return "Discard recon judgment for " + cellDescription;
 
                 case Error:
-                    // We typically don't allow setting manual 'Error' explicitly
                     throw new IllegalArgumentException("Cannot manually set judgment to 'error'");
 
                 case New:
@@ -282,16 +261,12 @@ public class ReconJudgeOneCellCommand extends Command {
                             cellDescription;
 
                 default:
-                    // For safety if new judgments are added in the future
                     newRecon.judgment = Judgment.None;
                     newRecon.match = null;
                     return "No recognized judgment found for " + cellDescription;
             }
         }
 
-        /**
-         * Updates recon stats by comparing old vs. new judgments.
-         */
         private ReconStats updateStats(ReconStats stats, Judgment oldJ, Judgment newJ) {
             int newChange    = calcDelta(oldJ, newJ, Judgment.New);
             int matchChange  = calcDelta(oldJ, newJ, Judgment.Matched);
