@@ -40,10 +40,10 @@ public interface TabularSerializer {
 
     class CellData {
 
-        final public String columnName;
-        final public Object value;
-        final public String text;
-        final public String link;
+        public String columnName;
+        public Object value;
+        public String text;
+        public String link;
 
         public CellData(String columnName, Object value, String text, String link) {
             this.columnName = columnName;
